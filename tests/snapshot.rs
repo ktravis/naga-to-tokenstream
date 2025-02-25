@@ -33,6 +33,7 @@ fn readme_snapshot() {
             gen_glam: true,
             gen_encase: true,
             gen_naga: true,
+            type_overrides: Default::default(),
         },
     );
 

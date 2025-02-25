@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
+use naga::proc::{Alignment, Layouter};
 use proc_macro2::TokenStream;
+use quote::format_ident;
 
 use crate::ModuleToTokensConfig;
 
@@ -124,7 +126,7 @@ fn rust_type(type_inner: &naga::TypeInner, args: &ModuleToTokensConfig) -> Optio
 
 /// A builder for type definition and identifier pairs.
 pub struct TypesDefinitions {
-    definitions: Vec<syn::ItemStruct>,
+    items: Vec<syn::Item>,
     references: HashMap<naga::Handle<naga::Type>, syn::Type>,
     structs_filter: Option<HashSet<String>>,
 }
@@ -137,7 +139,7 @@ impl TypesDefinitions {
         args: &ModuleToTokensConfig,
     ) -> Self {
         let mut res = Self {
-            definitions: Vec::new(),
+            items: Vec::new(),
             references: HashMap::new(),
             structs_filter,
         };
@@ -157,13 +159,18 @@ impl TypesDefinitions {
         module: &naga::Module,
         args: &ModuleToTokensConfig,
     ) -> Option<syn::Type> {
-        let ty = match module.types.get_handle(ty_handle) {
-            Err(_) => return None,
-            Ok(ty) => ty,
-        };
+        let ty = module.types.get_handle(ty_handle).ok()?;
         if let Some(ty_ident) = rust_type(&ty.inner, args) {
             return Some(ty_ident);
         };
+
+        if let Some(repl) = ty
+            .name
+            .as_ref()
+            .and_then(|name| args.type_overrides.get(name))
+        {
+            return Some(repl.clone());
+        }
 
         match &ty.inner {
             naga::TypeInner::Array { base, size, .. }
@@ -175,6 +182,7 @@ impl TypesDefinitions {
                         Some(syn::parse_quote!([#base_type; #size as usize]))
                     }
                     naga::ArraySize::Dynamic => Some(syn::parse_quote!(Vec<#base_type>)),
+                    naga::ArraySize::Pending(_) => todo!(),
                 }
             }
             naga::TypeInner::Struct { members, .. } => {
@@ -191,8 +199,15 @@ impl TypesDefinitions {
                     }
                 }
 
+                let mut layouter = Layouter::default();
+                layouter.update(module.to_ctx()).unwrap();
+
                 let members_have_names = members.iter().all(|member| member.name.is_some());
-                let members: Option<Vec<_>> = members
+                let mut last_field_name = None;
+                let mut total_offset = 0;
+                let mut largest_alignment = 0;
+
+                let mut members: Vec<_> = members
                     .iter()
                     .enumerate()
                     .map(|(i_member, member)| {
@@ -228,7 +243,35 @@ impl TypesDefinitions {
 
                         member_ty.and_then(|member_ty| {
                             member_name.ok().map(|member_name| {
+                                let inner_type = module
+                                    .types
+                                    .get_handle(member.ty)
+                                    .expect("failed to locate member type")
+                                    .inner
+                                    .clone();
+                                let field_size = inner_type.size(module.to_ctx());
+                                let alignment = layouter[member.ty].alignment * 1u32;
+                                largest_alignment = largest_alignment.max(alignment);
+                                let padding_needed =
+                                    layouter[member.ty].alignment.round_up(total_offset)
+                                        - total_offset;
+                                let pad = if padding_needed > 0 {
+                                    let padding_member_name = format_ident!(
+                                        "_pad_{}",
+                                        last_field_name.as_ref().expect(
+                                            "invariant: expected prior member before padding field"
+                                        )
+                                    );
+                                    quote::quote! {
+                                        pub #padding_member_name: [u8; #padding_needed as usize],
+                                    }
+                                } else {
+                                    quote::quote! {}
+                                };
+                                total_offset += field_size + padding_needed;
+                                last_field_name = Some(member_name.clone());
                                 quote::quote! {
+                                    #pad
                                     #attributes
                                     pub #member_name: #member_ty
                                 }
@@ -236,20 +279,33 @@ impl TypesDefinitions {
                         })
                     })
                     .collect();
+                let struct_alignment = Alignment::from_width(largest_alignment as u8);
+                if !struct_alignment.is_aligned(total_offset) {
+                    // struct needs padding to be aligned
+                    let padding_needed = struct_alignment.round_up(total_offset) - total_offset;
+                    members.push(Some(quote::quote! {
+                        pub _pad: [u8; #padding_needed as usize],
+                    }));
+                }
                 let struct_name = syn::parse_str::<syn::Ident>(struct_name).ok();
                 match (members, struct_name) {
-                    (Some(members), Some(struct_name)) => {
+                    (members, Some(struct_name)) => {
                         #[allow(unused_mut)]
                         let mut bonus_struct_derives = TokenStream::new();
                         if args.gen_encase {
                             bonus_struct_derives.extend(quote::quote!(encase::ShaderType,))
                         }
+                        if args.gen_bytemuck {
+                            bonus_struct_derives
+                                .extend(quote::quote!(bytemuck::Pod, bytemuck::Zeroable,));
+                        }
 
-                        self.definitions.push(syn::parse_quote! {
+                        self.items.push(syn::parse_quote! {
                             #[allow(unused, non_camel_case_types)]
-                            #[derive(Debug, PartialEq, Clone, #bonus_struct_derives)]
+                            #[repr(C)]
+                            #[derive(Debug, PartialEq, Copy, Clone, #bonus_struct_derives)]
                             pub struct #struct_name {
-                                #(#members ,)*
+                                #(#members),*
                             }
                         });
                         Some(syn::parse_quote!(#struct_name))
@@ -285,10 +341,7 @@ impl TypesDefinitions {
 
     /// Gives the set of definitions required by the identifiers generated by this object. These should be
     /// emitted somewhere accessable by the places that the identifiers were used.
-    pub fn definitions(self) -> Vec<syn::Item> {
-        self.definitions
-            .into_iter()
-            .map(syn::Item::Struct)
-            .collect()
+    pub fn items(self) -> Vec<syn::Item> {
+        self.items
     }
 }

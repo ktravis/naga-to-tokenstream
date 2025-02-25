@@ -1,7 +1,7 @@
 #![deny(missing_docs)]
 #![doc = include_str!("../README.md")]
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// Methods for converting sets of `naga::Constant`s to token streams.
 pub mod constants;
@@ -71,8 +71,16 @@ pub struct ModuleToTokensConfig {
     pub gen_glam: bool,
     /// Generate `encase` types.
     pub gen_encase: bool,
+    /// Generate `bytemuck` types.
+    pub gen_bytemuck: bool,
     /// Generate `naga` types.
     pub gen_naga: bool,
+
+    /// Skip definitions and replace usage with the associated items
+    pub type_overrides: HashMap<String, syn::Type>,
+
+    /// Name of the module
+    pub module_name: String,
 }
 
 mod sealed {
@@ -143,7 +151,7 @@ impl ModuleToTokens for naga::Module {
         });
 
         // Types
-        let types = collect_tokenstream(types.definitions());
+        let types = collect_tokenstream(types.items());
         items.push(syn::parse_quote! {
             #[allow(unused)]
             #[doc = "Equivalent Rust definitions of the types defined in this module."]
@@ -162,6 +170,14 @@ impl ModuleToTokens for naga::Module {
             items.push(syn::parse_quote! {
                 #[doc = "The sourcecode for the shader, as a constant string."]
                 pub const SOURCE: &'static str = #src;
+            });
+            let name = &cfg.module_name;
+            items.push(syn::parse_quote! {
+                #[doc = "Shader module descriptor."]
+                pub const DESCRIPTOR: ::wgpu::ShaderModuleDescriptor = ::wgpu::ShaderModuleDescriptor{
+                    label: Some(#name),
+                    source: ::wgpu::ShaderSource::Wgsl(::std::borrow::Cow::Borrowed(SOURCE)),
+                };
             });
         }
 

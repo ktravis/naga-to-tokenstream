@@ -1,3 +1,5 @@
+## Forked to include support for making `bytemuck`-compatible padded structs, share types between modules, and generate functions for bind group layouts.
+
 # Naga to TokenStream
 [![crates.io](https://img.shields.io/crates/v/naga-to-tokenstream.svg)](https://crates.io/crates/naga-to-tokenstream)
 [![docs.rs](https://img.shields.io/docsrs/naga-to-tokenstream)](https://docs.rs/naga-to-tokenstream/latest/naga_to_tokenstream/)

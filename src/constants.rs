@@ -124,6 +124,7 @@ pub fn make_constants(
             constant_name
         );
         constants.push(syn::parse_quote! {
+            #[allow(non_snake_case)]
             #[doc = #doc]
             pub mod #constant_name_ident {
                 #[allow(unused)]
