@@ -79,6 +79,10 @@ pub struct ModuleToTokensConfig {
     /// Skip definitions and replace usage with the associated items
     pub type_overrides: HashMap<String, syn::Type>,
 
+    /// These types are used as vertex inputs to entrypoints in this module or another, and should
+    /// be packed tightly
+    pub vertex_input_types: Option<HashSet<String>>,
+
     /// Name of the module
     pub module_name: String,
 }
@@ -109,7 +113,7 @@ pub trait ModuleToTokens: sealed::SealedModule {
 impl ModuleToTokens for naga::Module {
     fn to_items(&self, cfg: ModuleToTokensConfig) -> Vec<syn::Item> {
         let mut items = Vec::new();
-        let mut types = types::TypesDefinitions::new(self, cfg.structs_filter.clone(), &cfg);
+        let mut types = types::TypesDefinitions::new(self, &cfg);
 
         // Globals
         let globals = collect_tokenstream(globals::make_globals(self, &mut types, &cfg));

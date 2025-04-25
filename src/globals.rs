@@ -298,6 +298,7 @@ pub fn make_globals(
             pub mod #group_ident {
                 #[allow(unused)]
                 use super::*;
+                pub const GROUP: u32 = #group;
 
                 #layout_fn
             }

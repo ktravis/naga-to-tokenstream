@@ -124,24 +124,119 @@ fn rust_type(type_inner: &naga::TypeInner, args: &ModuleToTokensConfig) -> Optio
     }
 }
 
+fn vertex_format(type_inner: &naga::TypeInner) -> syn::Field {
+    match type_inner {
+        naga::TypeInner::Scalar(naga::Scalar { kind, width }) => match (kind, width) {
+            (naga::ScalarKind::Bool, 1) => todo!(),
+            (naga::ScalarKind::Float, 4) => syn::parse_quote!(::wgpu::VertexFormat::Float32),
+            (naga::ScalarKind::Float, 8) => syn::parse_quote!(::wgpu::VertexFormat::Float64),
+            (naga::ScalarKind::Sint, 4) => syn::parse_quote!(::wgpu::VertexFormat::Sint32),
+            (naga::ScalarKind::Sint, 8) => todo!(),
+            (naga::ScalarKind::Uint, 4) => syn::parse_quote!(::wgpu::VertexFormat::Uint32),
+            (naga::ScalarKind::Uint, 8) => todo!(),
+            _ => todo!(),
+        },
+        naga::TypeInner::Vector {
+            size,
+            scalar: naga::Scalar { kind, width },
+        } => match (size, kind, width) {
+            // Float vectors
+            (naga::VectorSize::Bi, naga::ScalarKind::Float, 2) => {
+                syn::parse_quote!(::wgpu::VertexFormat::Float16x2)
+            }
+            (naga::VectorSize::Quad, naga::ScalarKind::Float, 2) => {
+                syn::parse_quote!(::wgpu::VertexFormat::Float16x4)
+            }
+            (naga::VectorSize::Bi, naga::ScalarKind::Float, 4) => {
+                syn::parse_quote!(::wgpu::VertexFormat::Float32x2)
+            }
+            (naga::VectorSize::Tri, naga::ScalarKind::Float, 4) => {
+                syn::parse_quote!(::wgpu::VertexFormat::Float32x3)
+            }
+            (naga::VectorSize::Quad, naga::ScalarKind::Float, 4) => {
+                syn::parse_quote!(::wgpu::VertexFormat::Float32x4)
+            }
+            (naga::VectorSize::Bi, naga::ScalarKind::Float, 8) => {
+                syn::parse_quote!(::wgpu::VertexFormat::Float64x2)
+            }
+            (naga::VectorSize::Tri, naga::ScalarKind::Float, 8) => {
+                syn::parse_quote!(::wgpu::VertexFormat::Float64x3)
+            }
+            (naga::VectorSize::Quad, naga::ScalarKind::Float, 8) => {
+                syn::parse_quote!(::wgpu::VertexFormat::Float64x4)
+            }
+            // Signed int vectors
+            (naga::VectorSize::Bi, naga::ScalarKind::Sint, 1) => {
+                syn::parse_quote!(::wgpu::VertexFormat::Sint8x2)
+            }
+            (naga::VectorSize::Quad, naga::ScalarKind::Sint, 1) => {
+                syn::parse_quote!(::wgpu::VertexFormat::Sint8x4)
+            }
+            (naga::VectorSize::Bi, naga::ScalarKind::Sint, 2) => {
+                syn::parse_quote!(::wgpu::VertexFormat::Sint16x2)
+            }
+            (naga::VectorSize::Quad, naga::ScalarKind::Sint, 2) => {
+                syn::parse_quote!(::wgpu::VertexFormat::Sint16x4)
+            }
+            (naga::VectorSize::Bi, naga::ScalarKind::Sint, 4) => {
+                syn::parse_quote!(::wgpu::VertexFormat::Sint32x2)
+            }
+            (naga::VectorSize::Tri, naga::ScalarKind::Sint, 4) => {
+                syn::parse_quote!(::wgpu::VertexFormat::Sint32x3)
+            }
+            (naga::VectorSize::Quad, naga::ScalarKind::Sint, 4) => {
+                syn::parse_quote!(::wgpu::VertexFormat::Sint32x4)
+            }
+            // Unsigned int vectors
+            (naga::VectorSize::Bi, naga::ScalarKind::Uint, 1) => {
+                syn::parse_quote!(::wgpu::VertexFormat::Uint8x4)
+            }
+            (naga::VectorSize::Quad, naga::ScalarKind::Uint, 1) => {
+                syn::parse_quote!(::wgpu::VertexFormat::Uint8x4)
+            }
+            (naga::VectorSize::Bi, naga::ScalarKind::Uint, 2) => {
+                syn::parse_quote!(::wgpu::VertexFormat::Uint16x4)
+            }
+            (naga::VectorSize::Quad, naga::ScalarKind::Uint, 2) => {
+                syn::parse_quote!(::wgpu::VertexFormat::Uint16x4)
+            }
+            (naga::VectorSize::Bi, naga::ScalarKind::Uint, 4) => {
+                syn::parse_quote!(::wgpu::VertexFormat::Uint32x4)
+            }
+            (naga::VectorSize::Tri, naga::ScalarKind::Uint, 4) => {
+                syn::parse_quote!(::wgpu::VertexFormat::Uint32x4)
+            }
+            (naga::VectorSize::Quad, naga::ScalarKind::Uint, 4) => {
+                syn::parse_quote!(::wgpu::VertexFormat::Uint32x4)
+            }
+            // TODO: normalized types - maybe with an attribute tag?
+            _ => todo!(),
+        },
+        naga::TypeInner::Matrix { .. } => {
+            // error
+            todo!();
+        }
+        // naga::TypeInner::Atomic(scalar) => rust_type(&naga::TypeInner::Scalar(*scalar), args),
+        _ => todo!(),
+    }
+}
+
 /// A builder for type definition and identifier pairs.
 pub struct TypesDefinitions {
     items: Vec<syn::Item>,
     references: HashMap<naga::Handle<naga::Type>, syn::Type>,
     structs_filter: Option<HashSet<String>>,
+    vertex_input_types: Option<HashSet<String>>,
 }
 
 impl TypesDefinitions {
     /// Constructs a new type definition collator, with a given filter for type names.
-    pub fn new(
-        module: &naga::Module,
-        structs_filter: Option<HashSet<String>>,
-        args: &ModuleToTokensConfig,
-    ) -> Self {
+    pub fn new(module: &naga::Module, args: &ModuleToTokensConfig) -> Self {
         let mut res = Self {
             items: Vec::new(),
             references: HashMap::new(),
-            structs_filter,
+            structs_filter: args.structs_filter.clone(),
+            vertex_input_types: args.vertex_input_types.clone(),
         };
 
         for (ty_handle, _) in module.types.iter() {
@@ -199,6 +294,11 @@ impl TypesDefinitions {
                     }
                 }
 
+                let is_vertex_input = self
+                    .vertex_input_types
+                    .as_ref()
+                    .is_some_and(|vertex_input_types| vertex_input_types.contains(struct_name));
+
                 let mut layouter = Layouter::default();
                 layouter.update(module.to_ctx()).unwrap();
 
@@ -206,6 +306,7 @@ impl TypesDefinitions {
                 let mut last_field_name = None;
                 let mut total_offset = 0;
                 let mut largest_alignment = 0;
+                let mut member_types = vec![];
 
                 let mut members: Vec<_> = members
                     .iter()
@@ -250,11 +351,15 @@ impl TypesDefinitions {
                                     .inner
                                     .clone();
                                 let field_size = inner_type.size(module.to_ctx());
-                                let alignment = layouter[member.ty].alignment * 1u32;
-                                largest_alignment = largest_alignment.max(alignment);
+                                member_types.push((inner_type, field_size));
+                                let alignment = layouter[member.ty].alignment;
+                                largest_alignment = largest_alignment.max(alignment * 1u32);
                                 let padding_needed =
-                                    layouter[member.ty].alignment.round_up(total_offset)
-                                        - total_offset;
+                                    if is_vertex_input || alignment.is_aligned(total_offset) {
+                                        0
+                                    } else {
+                                        alignment.round_up(total_offset) - total_offset
+                                    };
                                 let pad = if padding_needed > 0 {
                                     let padding_member_name = format_ident!(
                                         "_pad_{}",
@@ -280,7 +385,7 @@ impl TypesDefinitions {
                     })
                     .collect();
                 let struct_alignment = Alignment::from_width(largest_alignment as u8);
-                if !struct_alignment.is_aligned(total_offset) {
+                if !is_vertex_input && !struct_alignment.is_aligned(total_offset) {
                     // struct needs padding to be aligned
                     let padding_needed = struct_alignment.round_up(total_offset) - total_offset;
                     members.push(Some(quote::quote! {
@@ -308,6 +413,39 @@ impl TypesDefinitions {
                                 #(#members),*
                             }
                         });
+                        if is_vertex_input {
+                            let n_attributes = members.len();
+                            let mut offset: u64 = 0;
+                            let attributes =
+                                member_types.iter().zip(0u32..).map(|((ty, size), i)| {
+                                    let format = vertex_format(ty);
+                                    let x = quote::quote! {
+                                        ::wgpu::VertexAttribute{
+                                            format: #format,
+                                            offset: #offset,
+                                            shader_location: #i,
+                                        }
+                                    };
+                                    offset += *size as u64;
+                                    x
+                                });
+                            self.items.push(syn::parse_quote! {
+                                // This is a vertex input type
+                                impl #struct_name {
+                                    pub const VERTEX_ATTRIBUTES: [::wgpu::VertexAttribute; #n_attributes] = [
+                                        #(#attributes),*
+                                    ];
+
+                                    pub fn vertex_buffer_layout() -> ::wgpu::VertexBufferLayout<'static> {
+                                        ::wgpu::VertexBufferLayout {
+                                            array_stride: ::std::mem::size_of::<Self>() as ::wgpu::BufferAddress,
+                                            step_mode: ::wgpu::VertexStepMode::Vertex,
+                                            attributes: &Self::VERTEX_ATTRIBUTES,
+                                        }
+                                    }
+                                }
+                            });
+                        }
                         Some(syn::parse_quote!(#struct_name))
                     }
                     _ => None,
